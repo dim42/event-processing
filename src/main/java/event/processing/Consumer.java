@@ -11,6 +11,7 @@ import java.util.concurrent.FutureTask;
 public class Consumer<V> implements Runnable {
 
     private static final Logger log = LoggerFactory.getLogger(Consumer.class);
+
     private final BlockingQueue<TimeCallableEvent> queue;
     private final Queue<String> resultQueue;
 
@@ -29,24 +30,20 @@ public class Consumer<V> implements Runnable {
             TimeCallableEvent event = null;
             try {
                 event = queue.take();
+                resultQueue.add(event.getCallable().toString());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-            if (event == null) {
-                continue;
-            }
-            resultQueue.add(event.getCallable().toString());
-
             try {
                 FutureTask<V> futureTask = new FutureTask<>(event.getCallable());
                 futureTask.run();
                 V result = futureTask.get();
                 log.info("Result:" + result);
             } catch (InterruptedException e) {
-                e.printStackTrace();
-                Thread.currentThread().interrupt();
+                log.error("Process interrupted", e);
+                Thread.currentThread().interrupt();// Reset/restore interrupted status
             } catch (ExecutionException e) {
-                e.printStackTrace();
+                log.error("Execution error", e);
             }
         }
     }
