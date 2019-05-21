@@ -11,6 +11,8 @@ import java.util.Queue;
 import java.util.concurrent.*;
 
 import static java.lang.String.format;
+import static java.util.concurrent.CompletableFuture.runAsync;
+import static java.util.stream.Collectors.toList;
 import static org.junit.Assert.assertTrue;
 
 public class AppTest {
@@ -19,59 +21,53 @@ public class AppTest {
 
     @Test
     public void testEvents() {
-        ExecutorService threadPool = Executors.newCachedThreadPool();
-        BlockingQueue<TimeCallableEvent> queue = new DelayQueue<>();
+        BlockingQueue<TimeCallableEvent<Integer>> eventQueue = new DelayQueue<>();
+        Queue<String> callableQueue = new ConcurrentLinkedQueue<>();
+        Queue<CompletableFuture<Integer>> resultQueue = new ConcurrentLinkedQueue<>();
 
-        Queue<String> resultQueue = new ConcurrentLinkedQueue<>();
-        threadPool.execute(new Consumer<>(queue, resultQueue));
+        runAsync(new Consumer<>(eventQueue, callableQueue, resultQueue));
 
         int size = 10;
         int nowId = 5;
         LocalDateTime now = LocalDateTime.now();
-        Producer<TimeCallableEvent, Integer> producer;
+        Producer<TimeCallableEvent<Integer>, Integer> producer = new Producer<>(eventQueue);
         for (int i = 0; i < size; i++) {
             if (i == 2) {
-                producer = new Producer<>(queue);
-                producer.add(now.plusNanos(30_000_000), new DelayedTask(13));
-                threadPool.execute(producer);
+                runAsync(() -> {
+                    LocalDateTime time = now.plusNanos(30_000_000);
+                    producer.add(time, new DelayedTask(13));
+                    producer.add(time, new DelayedTask(2));
+                    producer.add(time, new DelayedTask(11));
+                });
+            } else {
+                int finalI = i;
+                runAsync(() -> producer.add(now.plusNanos((nowId - finalI) * 10_000_000), new DelayedTask(finalI)));
             }
-
-            producer = new Producer<>(queue);
-            producer.add(now.plusNanos((nowId - i) * 10_000_000), new DelayedTask(i));
-            threadPool.execute(producer);
         }
-        producer = new Producer<>(queue);
-        producer.add(now.plusNanos(30_000_000), new DelayedTask(11));
-        threadPool.execute(producer);
-
-        threadPool.execute(() -> queue.add(new TimeCallableEvent<>(now.plusSeconds(1), new Callable<>() {
-            @Override
-            public Integer call() {
-                log.info("resultQueue:{}", resultQueue);
-
-                List<String> ids = Arrays.asList(resultQueue.toArray(new String[0]));
-                int first = ids.indexOf("9");
-                int middle = ids.indexOf("4");
-                int last = ids.indexOf("2");
-
-                assertTrue(format("f:%d,m:%d", first, middle), first < middle);
-                assertTrue(format("m:%d,l:%d", middle, last), middle < last);
-
-                Thread.currentThread().interrupt();
-                threadPool.shutdownNow();
-                return -1;
-            }
-
-            @Override
-            public String toString() {
-                return String.valueOf(-1);
-            }
-        })));
 
         try {
             TimeUnit.SECONDS.sleep(1);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+        Thread.currentThread().interrupt();// stop Consumer
+
+        log.info("callableQueue:{}", callableQueue);
+        List<String> ids = Arrays.asList(callableQueue.toArray(new String[0]));
+        int first = ids.indexOf("9");
+        int middle = ids.indexOf("4");
+        int last1 = ids.indexOf("13");
+        int last2 = ids.indexOf("2");
+        int last3 = ids.indexOf("11");
+
+        assertTrue(format("f:%d,m:%d", first, middle), first < middle);
+        assertTrue(format("m:%d,l:%d", middle, last2), middle < last2);
+        assertTrue(format("l1:%d,l2:%d", last1, last2), last1 < last2);
+        assertTrue(format("l2:%d,l3:%d", last2, last3), last2 < last3);
+
+        log.info("resultQueue:{}", resultQueue);
+        List<Integer> results = resultQueue.stream().map(CompletableFuture::join).collect(toList());
+        log.info("results:{}", results);
+        System.out.println("test exit");
     }
 }

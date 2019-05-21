@@ -5,45 +5,44 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Queue;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.FutureTask;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+
+import static java.util.concurrent.CompletableFuture.supplyAsync;
 
 public class Consumer<V> implements Runnable {
 
     private static final Logger log = LoggerFactory.getLogger(Consumer.class);
 
-    private final BlockingQueue<TimeCallableEvent> queue;
-    private final Queue<String> resultQueue;
+    private final BlockingQueue<TimeCallableEvent<V>> eventQueue;
+    private final Queue<String> callableQueue;
+    private final Queue<CompletableFuture<V>> resultQueue;
 
-    public Consumer(BlockingQueue<TimeCallableEvent> queue, Queue<String> resultQueue) {
-        this.queue = queue;
+    public Consumer(BlockingQueue<TimeCallableEvent<V>> eventQueue, Queue<String> callableQueue, Queue<CompletableFuture<V>> resultQueue) {
+        this.eventQueue = eventQueue;
+        this.callableQueue = callableQueue;
         this.resultQueue = resultQueue;
     }
 
     @Override
     public void run() {
-        process();
-    }
-
-    public void process() {
         while (!Thread.currentThread().isInterrupted()) {
-            TimeCallableEvent event = null;
             try {
-                event = queue.take();
-                resultQueue.add(event.getCallable().toString());
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-            try {
-                FutureTask<V> futureTask = new FutureTask<>(event.getCallable());
-                futureTask.run();
-                V result = futureTask.get();
-                log.info("Result:" + result);
+                final TimeCallableEvent<V> event = eventQueue.take();
+                callableQueue.add(event.getCallable().toString());
+                CompletableFuture<V> cf = supplyAsync(() -> {
+                    try {
+                        Callable<V> callable = event.getCallable();
+                        return callable.call();
+                    } catch (Exception e) {
+                        throw new CompletionException(e);
+                    }
+                });
+                resultQueue.add(cf);
             } catch (InterruptedException e) {
                 log.error("Process interrupted", e);
                 Thread.currentThread().interrupt();// Reset/restore interrupted status
-            } catch (ExecutionException e) {
-                log.error("Execution error", e);
             }
         }
     }
