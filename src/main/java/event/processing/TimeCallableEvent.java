@@ -24,7 +24,7 @@ public class TimeCallableEvent<V> implements Delayed {
     public int compareTo(Delayed arg) {
         TimeCallableEvent other = (TimeCallableEvent) arg;
         int result = time.compareTo(other.time);
-        if (result == 0 && time != other.time && callable != other.callable) {
+        if (result == 0 && callable != other.callable) {
             result = Long.compare(seqNum, other.seqNum);
         }
         return result;
